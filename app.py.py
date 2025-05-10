@@ -1,11 +1,12 @@
 import streamlit as st
 import numpy as np
-import matplotlib.pyplot as plt
+import pandas as pd
 import cvxpy as cp
+import matplotlib.pyplot as plt
 
 # تخصيص الألوان
 st.markdown("<h1 style='color:#1E90FF;'>محاكي التحسين المالي</h1>", unsafe_allow_html=True)
-st.markdown("<p style='color:#32CD32;'>هنا يمكنك تحسين محفظتك الاستثمارية بناءً على القيود التنظيمية.</p>", unsafe_allow_html=True)
+st.markdown("<p style='color:#32CD32;'>هنا يمكنك تحسين محفظتك الاستثمارية بناءً على القيود التنظيمية والمالية.</p>", unsafe_allow_html=True)
 
 # تخصيص الأزرار باستخدام CSS
 st.markdown("""
@@ -23,53 +24,69 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# بيانات ثابتة للعوائد والأصول
-mu = np.array([0.1, 0.15, 0.12, 0.08, 0.14])  # العوائد المتوقعة للأصول
-Sigma = np.array([[0.1, 0.02, 0.03, 0.01, 0.02],
-                  [0.02, 0.12, 0.04, 0.02, 0.03],
-                  [0.03, 0.04, 0.15, 0.02, 0.05],
-                  [0.01, 0.02, 0.02, 0.1, 0.01],
-                  [0.02, 0.03, 0.05, 0.01, 0.11]])  # مصفوفة التباين والتغاير للأصول
-n = len(mu)  # عدد الأصول
+# تحميل ملف البيانات
+uploaded_file = st.file_uploader("📁 حمّل ملف CSV", type=["csv"])
 
-# شريط تمرير لتحديد المخاطرة
-risk_limit = st.sidebar.slider("🔒 الحد الأقصى للمخاطرة", 0.0, 0.1, 0.05)
-
-# قائمة متعددة لاختيار الأصول غير المتوافقة مع الشريعة
-non_halal = st.sidebar.multiselect("🕌 الشركات غير المتوافقة مع الشريعة", options=list(range(n)))
-
-# زر لتشغيل التحسين
-if st.button('🎯 تحسين المحفظة'):
-    # إعداد نموذج التحسين
-    w = cp.Variable(n)
-    risk = cp.quad_form(w, Sigma)
-    ret = mu @ w
-
-    constraints = [
-        cp.sum(w) == 1,
-        w >= 0,
-        risk <= risk_limit
-    ]
-
-    for i in non_halal:
-        constraints.append(w[i] == 0)
-
-    prob = cp.Problem(cp.Maximize(ret), constraints)
-    prob.solve()
-
-    st.markdown("<h2 style='color:green;'>نتائج المحفظة المثلى</h2>", unsafe_allow_html=True)
-
-    if w.value is not None:
-        st.success("✅ تم حساب المحفظة المثلى بنجاح!")
-
-        # تخصيص الرسم البياني
-        fig, ax = plt.subplots()
-        ax.bar(range(n), w.value, color=['#FF6347', '#1E90FF', '#32CD32', '#FFD700', '#8A2BE2'])  # ألوان مخصصة
-        ax.set_title('أوزان المحفظة الاستثمارية', fontsize=14, color='darkblue')
-        ax.set_xlabel('الأصول', fontsize=12, color='navy')
-        ax.set_ylabel('النسبة', fontsize=12, color='navy')
-
-        # عرض الرسم البياني في Streamlit
-        st.pyplot(fig)
+if uploaded_file is not None:
+    df = pd.read_csv(uploaded_file)
+    
+    # التحقق من الأعمدة في البيانات
+    if "returns" not in df.columns:
+        st.error("❌ لا يحتوي الملف على عمود 'returns'.")
     else:
-        st.error("❌ لم يتم العثور على حل ضمن القيود المدخلة.")
+        # تخصيص الأعمدة تلقائيًا
+        mu = df["returns"].values
+        Sigma = df.drop("returns", axis=1).values  # باقي الأعمدة هي التغاير
+        n = len(mu)
+
+        # شريط تمرير لتحديد المخاطرة
+        risk_limit = st.sidebar.slider("🔒 الحد الأقصى للمخاطرة", 0.0, 0.1, 0.05)
+
+        # قائمة متعددة لاختيار الأصول غير المتوافقة مع الشريعة
+        non_halal = st.sidebar.multiselect("🕌 الشركات غير المتوافقة مع الشريعة", options=list(range(n)))
+
+        # تخصيص القيود المالية: الحد الأدنى والأقصى للاستثمار في الأصول
+        min_allocation = st.sidebar.slider("📉 الحد الأدنى للاستثمار في الأصل (%)", 0.0, 0.2, 0.05)
+        max_allocation = st.sidebar.slider("📈 الحد الأقصى للاستثمار في الأصل (%)", 0.2, 1.0, 0.3)
+
+        # زر لتشغيل التحسين
+        if st.button('🎯 تحسين المحفظة'):
+            # إعداد نموذج التحسين
+            w = cp.Variable(n)
+            risk = cp.quad_form(w, Sigma)
+            ret = mu @ w
+
+            constraints = [
+                cp.sum(w) == 1,
+                w >= 0,
+                risk <= risk_limit
+            ]
+
+            for i in non_halal:
+                constraints.append(w[i] == 0)
+            
+            for i in range(n):
+                constraints.append(w[i] >= min_allocation)
+                constraints.append(w[i] <= max_allocation)
+
+            prob = cp.Problem(cp.Maximize(ret), constraints)
+            prob.solve()
+
+            st.markdown("<h2 style='color:green;'>نتائج المحفظة المثلى</h2>", unsafe_allow_html=True)
+
+            if w.value is not None:
+                st.success("✅ تم حساب المحفظة المثلى بنجاح!")
+
+                # تخصيص الرسم البياني
+                fig, ax = plt.subplots()
+                ax.bar(range(n), w.value, color=['#FF6347', '#1E90FF', '#32CD32', '#FFD700', '#8A2BE2'])  # ألوان مخصصة
+                ax.set_title('أوزان المحفظة الاستثمارية', fontsize=14, color='darkblue')
+                ax.set_xlabel('الأصول', fontsize=12, color='navy')
+                ax.set_ylabel('النسبة', fontsize=12, color='navy')
+
+                # عرض الرسم البياني في Streamlit
+                st.pyplot(fig)
+            else:
+                st.error("❌ لم يتم العثور على حل ضمن القيود المدخلة.")
+else:
+    st.info("يرجى تحميل ملف CSV لبدء التحليل.")
